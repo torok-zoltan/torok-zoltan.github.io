@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:prf_plugin/prf_plugin.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const PrfExampleApp());
@@ -33,12 +34,17 @@ class PrfHomePage extends StatefulWidget {
 enum PrfStatus { idle, running, success, error }
 
 class _PrfHomePageState extends State<PrfHomePage> {
+  // --- Persisted state keys ---
+  static const _keyIsRegistered = 'prf_is_registered';
+  static const _keyCredentialId = 'prf_credential_id';
+
   PrfStatus _status = PrfStatus.idle;
   String _statusMessage = '';
   bool _isRegistered = false;
   bool _useFixedSalt = false;
   bool? _prfSupported;
   PrfResult? _lastResult;
+  String? _savedCredentialId;
 
   /// Fixed salt for determinism testing: 32 bytes of 0x01.
   /// Using a fixed salt with the same credential should always
@@ -48,7 +54,26 @@ class _PrfHomePageState extends State<PrfHomePage> {
   @override
   void initState() {
     super.initState();
+    _loadPersistedState();
     _checkPrfSupport();
+  }
+
+  /// Load persisted registration state from SharedPreferences.
+  Future<void> _loadPersistedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isRegistered = prefs.getBool(_keyIsRegistered) ?? false;
+      _savedCredentialId = prefs.getString(_keyCredentialId);
+    });
+  }
+
+  /// Persist registration state to SharedPreferences.
+  Future<void> _saveRegistered(bool registered, String? credentialId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyIsRegistered, registered);
+    if (credentialId != null) {
+      await prefs.setString(_keyCredentialId, credentialId);
+    }
   }
 
   Future<void> _checkPrfSupport() async {
@@ -68,6 +93,7 @@ class _PrfHomePageState extends State<PrfHomePage> {
     });
     try {
       final prfEnabled = await PrfPlugin.registerPasskey();
+      await _saveRegistered(true, null);
       setState(() {
         _isRegistered = true;
         _status = PrfStatus.success;
@@ -98,7 +124,19 @@ class _PrfHomePageState extends State<PrfHomePage> {
       final result = await PrfPlugin.derivePrf(
         salt: _useFixedSalt ? _fixedSalt : null,
       );
+
+      // If PRF derivation succeeds, we know a passkey exists —
+      // persist the registered state even if the user skipped
+      // the explicit registration step.
+      if (!_isRegistered) {
+        await _saveRegistered(true, result.credentialId);
+      } else if (result.credentialId != null) {
+        await _saveRegistered(true, result.credentialId);
+      }
+
       setState(() {
+        _isRegistered = true;
+        _savedCredentialId = result.credentialId ?? _savedCredentialId;
         _lastResult = result;
         _status = PrfStatus.success;
         _statusMessage = 'PRF output derived successfully!';
@@ -129,194 +167,294 @@ class _PrfHomePageState extends State<PrfHomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-            // Platform support banner
-            if (_prfSupported != null)
-              Card(
-                color: _prfSupported!
-                    ? Colors.green.shade50
-                    : Colors.orange.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _prfSupported!
-                            ? Icons.check_circle_outline
-                            : Icons.warning_amber_outlined,
-                        color: _prfSupported!
-                            ? Colors.green
-                            : Colors.orange,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _prfSupported!
-                              ? 'PRF is likely supported on this device.'
-                              : 'PRF may not be supported on this device. '
-                                  'Requires Android 14+ with Chrome 130+, '
-                                  'or iOS 18+.',
-                          style: TextStyle(
-                            color: _prfSupported!
-                                ? Colors.green.shade900
-                                : Colors.orange.shade900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              // --- Registration status banner ---
+              _buildRegistrationBanner(),
 
-            const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
-            // Step 1: Register Passkey
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Step 1: Register Passkey',
-                        style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Create a passkey with PRF extension enabled. '
-                      'This step is needed once per RP ID.',
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: _status == PrfStatus.running
-                          ? null
-                          : _registerPasskey,
-                      icon: Icon(_isRegistered
-                          ? Icons.check_circle
-                          : Icons.fingerprint),
-                      label: Text(_isRegistered
-                          ? 'Re-register Passkey'
-                          : 'Register Passkey'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+              // --- Platform support banner ---
+              if (_prfSupported != null) ...[
+                _buildPlatformBanner(),
+                const SizedBox(height: 12),
+              ],
 
-            const SizedBox(height: 16),
+              // --- Adaptive layout based on registration state ---
+              if (_isRegistered) ...[
+                // Registered: PRF derivation is primary
+                _buildDerivePrfCard(),
+                const SizedBox(height: 16),
+                _buildRegisterCard(collapsed: true),
+              ] else ...[
+                // Not registered: Registration is primary
+                _buildRegisterCard(collapsed: false),
+                const SizedBox(height: 16),
+                _buildDerivePrfCard(),
+              ],
 
-            // Step 2: Derive PRF
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Step 2: Derive PRF',
-                        style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Authenticate with the passkey to derive a '
-                      'pseudo-random value using the PRF extension.',
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      title: const Text('Use fixed salt'),
-                      subtitle: const Text(
-                        'For determinism testing — same salt should '
-                        'produce same PRF output every time.',
-                      ),
-                      value: _useFixedSalt,
-                      onChanged: (v) => setState(() => _useFixedSalt = v),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const SizedBox(height: 8),
-                    FilledButton.icon(
-                      onPressed: _status == PrfStatus.running
-                          ? null
-                          : _derivePrf,
-                      icon: const Icon(Icons.vpn_key),
-                      label: const Text('Generate PRF'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Status display
-            Card(
-              color: _statusColor,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _statusIcon,
-                        const SizedBox(width: 8),
-                        Text(
-                          'Status: ${_status.name}',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                      ],
-                    ),
-                    if (_statusMessage.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(_statusMessage),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-
-            // PRF Result display
-            if (_lastResult != null) ...[
               const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('PRF Result',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 12),
-                      _resultRow(
-                        'Byte Length',
-                        '${_lastResult!.prfOutput.length} bytes',
-                      ),
-                      _resultRow(
-                        'Base64url',
-                        _lastResult!.prfOutputBase64Url,
-                      ),
-                      _resultRow(
-                        'Hex (full)',
-                        _lastResult!.prfOutputHex,
-                      ),
-                      _resultRow(
-                        'Hex Preview (first 16 bytes)',
-                        _lastResult!.prfOutputHexPreview,
-                      ),
-                      const Divider(),
-                      _resultRow(
-                        'Salt (base64url)',
-                        _lastResult!.saltBase64Url,
-                      ),
-                      if (_lastResult!.credentialId != null)
-                        _resultRow(
-                          'Credential ID',
-                          _lastResult!.credentialId!,
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
 
-            // Extra bottom spacing for devices with gesture bars
-            const SizedBox(height: 32),
+              // --- Status display ---
+              _buildStatusCard(),
+
+              // --- PRF Result display ---
+              if (_lastResult != null) ...[
+                const SizedBox(height: 16),
+                _buildResultCard(),
+              ],
+
+              // Extra bottom spacing for devices with gesture bars
+              const SizedBox(height: 32),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────────────────────
+  // UI builder methods
+  // ───────────────────────────────────────
+
+  Widget _buildRegistrationBanner() {
+    return Card(
+      color: _isRegistered ? Colors.green.shade50 : Colors.orange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(
+              _isRegistered
+                  ? Icons.check_circle
+                  : Icons.info_outline,
+              color: _isRegistered ? Colors.green : Colors.orange,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _isRegistered
+                    ? 'Passkey registered. Ready to derive PRF.'
+                    : 'No passkey registered yet. Register one below, '
+                        'or tap Generate PRF if you registered previously.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: _isRegistered
+                      ? Colors.green.shade900
+                      : Colors.orange.shade900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlatformBanner() {
+    return Card(
+      color: _prfSupported!
+          ? Colors.green.shade50
+          : Colors.orange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Icon(
+              _prfSupported!
+                  ? Icons.check_circle_outline
+                  : Icons.warning_amber_outlined,
+              color: _prfSupported! ? Colors.green : Colors.orange,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _prfSupported!
+                    ? 'PRF is likely supported on this device.'
+                    : 'PRF may not be supported. '
+                        'Requires Android 14+ with Chrome 130+, or iOS 18+.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _prfSupported!
+                      ? Colors.green.shade900
+                      : Colors.orange.shade900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRegisterCard({required bool collapsed}) {
+    if (collapsed) {
+      // Compact version for returning users
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Register New Passkey',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Create an additional passkey or re-register. '
+                'Your existing passkey remains valid.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed:
+                    _status == PrfStatus.running ? null : _registerPasskey,
+                icon: const Icon(Icons.fingerprint, size: 18),
+                label: const Text('Register Passkey'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Full version for first-time users
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Register Passkey',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'One-time setup. Creates a passkey with the PRF extension '
+              'enabled. The passkey is stored in iCloud Keychain (iOS) or '
+              'Google Password Manager (Android) and persists across '
+              'app launches.',
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed:
+                  _status == PrfStatus.running ? null : _registerPasskey,
+              icon: const Icon(Icons.fingerprint),
+              label: const Text('Register Passkey'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDerivePrfCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Derive PRF',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Authenticate with your passkey to derive a '
+              'pseudo-random value using the PRF extension.',
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('Use fixed salt'),
+              subtitle: const Text(
+                'For determinism testing — same salt should '
+                'produce same PRF output every time.',
+              ),
+              value: _useFixedSalt,
+              onChanged: (v) => setState(() => _useFixedSalt = v),
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed:
+                  _status == PrfStatus.running ? null : _derivePrf,
+              icon: const Icon(Icons.vpn_key),
+              label: const Text('Generate PRF'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    return Card(
+      color: _statusColor,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _statusIcon,
+                const SizedBox(width: 8),
+                Text(
+                  'Status: ${_status.name}',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ],
+            ),
+            if (_statusMessage.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(_statusMessage),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResultCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('PRF Result',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            _resultRow(
+              'Byte Length',
+              '${_lastResult!.prfOutput.length} bytes',
+            ),
+            _resultRow(
+              'Base64url',
+              _lastResult!.prfOutputBase64Url,
+            ),
+            _resultRow(
+              'Hex (full)',
+              _lastResult!.prfOutputHex,
+            ),
+            _resultRow(
+              'Hex Preview (first 16 bytes)',
+              _lastResult!.prfOutputHexPreview,
+            ),
+            const Divider(),
+            _resultRow(
+              'Salt (base64url)',
+              _lastResult!.saltBase64Url,
+            ),
+            if (_lastResult!.credentialId != null)
+              _resultRow(
+                'Credential ID',
+                _lastResult!.credentialId!,
+              ),
+          ],
         ),
       ),
     );
@@ -329,7 +467,8 @@ class _PrfHomePageState extends State<PrfHomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              style:
+                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 2),
           SelectableText(
             value,
