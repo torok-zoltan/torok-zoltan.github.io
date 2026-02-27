@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:w3c.github.io)",
+      "WebFetch(domain:simplewebauthn.dev)",
+      "WebFetch(domain:levischuck.com)",
+      "Bash(python3 -c \":*)"
+    ]
+  }
+}

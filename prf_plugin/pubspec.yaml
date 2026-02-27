@@ -1,0 +1,30 @@
+name: prf_plugin
+description: >
+  A Flutter plugin POC for deriving WebAuthn PRF output using passkeys.
+  Uses ASWebAuthenticationSession (iOS) and Chrome Custom Tabs (Android)
+  to open a WebAuthn page that performs the PRF extension ceremony.
+version: 0.0.1
+homepage: https://github.com/torok-zoltan/prf_plugin
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: '>=3.16.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.prf_plugin
+        pluginClass: PrfPlugin
+      ios:
+        pluginClass: PrfPlugin

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAuthn PRF</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 480px;
+            margin: 40px auto;
+            padding: 16px;
+            background: #f5f5f5;
+        }
+        .status {
+            padding: 16px;
+            border-radius: 8px;
+            margin: 16px 0;
+            background: white;
+            border: 1px solid #ddd;
+        }
+        .status.error { border-color: #e74c3c; background: #fdf0ef; }
+        .status.success { border-color: #27ae60; background: #edfaf1; }
+        .status.working { border-color: #3498db; background: #edf4fd; }
+        #log {
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        h1 { font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h1>WebAuthn PRF</h1>
+    <div id="statusBox" class="status working">
+        <div id="statusText">Initializing...</div>
+    </div>
+    <details>
+        <summary>Debug Log</summary>
+        <pre id="log"></pre>
+    </details>
+
+    <script>
+    (async function() {
+        var logEl = document.getElementById('log');
+        var statusBox = document.getElementById('statusBox');
+        var statusText = document.getElementById('statusText');
+
+        function log(msg) {
+            var ts = new Date().toISOString().substring(11, 23);
+            logEl.textContent += '[' + ts + '] ' + msg + '\n';
+            console.log(msg);
+        }
+
+        function setStatus(cls, msg) {
+            statusBox.className = 'status ' + cls;
+            statusText.textContent = msg;
+        }
+
+        function redirectResult(returnScheme, params) {
+            var query = Object.keys(params).map(function(k) {
+                return k + '=' + encodeURIComponent(params[k]);
+            }).join('&');
+            var url = returnScheme + '://callback?' + query;
+            log('Redirecting to: ' + url);
+            window.location.href = url;
+        }
+
+        function redirectError(returnScheme, code, message, details) {
+            var params = {
+                status: 'error',
+                errorCode: code,
+                errorMessage: message
+            };
+            if (details) { params.errorDetails = details; }
+            redirectResult(returnScheme, params);
+        }
+
+        // --- Base64url helpers ---
+
+        function base64UrlDecode(str) {
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (str.length % 4) { str += '='; }
+            var binary = atob(str);
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function base64UrlEncode(buffer) {
+            var bytes = new Uint8Array(buffer);
+            var binary = '';
+            for (var i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary)
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+        }
+
+        // --- Parse query params ---
+
+        var urlParams = new URLSearchParams(window.location.search);
+        var action = urlParams.get('action');
+        var rpId = urlParams.get('rpId');
+        var challengeB64 = urlParams.get('challenge');
+        var returnScheme = urlParams.get('returnScheme');
+        var saltB64 = urlParams.get('salt');
+
+        log('Params: action=' + action + ' rpId=' + rpId +
+            ' returnScheme=' + returnScheme);
+
+        // --- Validation ---
+
+        if (!action || !rpId || !challengeB64 || !returnScheme) {
+            setStatus('error', 'Missing required parameters');
+            log('ERROR: Missing params. Need action, rpId, challenge, returnScheme');
+            return;
+        }
+
+        if (action !== 'register' && action !== 'authenticate') {
+            setStatus('error', 'Invalid action: ' + action);
+            return;
+        }
+
+        if (action === 'authenticate' && !saltB64) {
+            setStatus('error', 'Salt is required for authentication');
+            redirectError(returnScheme, 'MISSING_SALT',
+                'Salt parameter is required for PRF derivation');
+            return;
+        }
+
+        // --- Feature detection ---
+
+        if (!window.PublicKeyCredential) {
+            setStatus('error', 'WebAuthn not supported');
+            redirectError(returnScheme, 'WEBAUTHN_NOT_SUPPORTED',
+                'WebAuthn API is not available in this browser');
+            return;
+        }
+
+        // Check PRF capability via getClientCapabilities (Chrome 132+)
+        var prfCapable = null; // null = unknown
+        try {
+            if (typeof PublicKeyCredential.getClientCapabilities === 'function') {
+                var caps = await PublicKeyCredential.getClientCapabilities();
+                prfCapable = caps['extension:prf'] === true;
+                log('PRF capability check: ' + prfCapable);
+                if (prfCapable === false) {
+                    log('WARNING: Browser reports PRF not supported');
+                }
+            } else {
+                log('getClientCapabilities not available, skipping capability check');
+            }
+        } catch (e) {
+            log('getClientCapabilities failed: ' + e.message);
+        }
+
+        var challenge = base64UrlDecode(challengeB64);
+
+        // ===============================
+        // REGISTRATION FLOW
+        // ===============================
+
+        if (action === 'register') {
+            setStatus('working', 'Creating passkey...');
+            log('Starting registration ceremony');
+
+            try {
+                // Generate a random user ID (8 bytes)
+                var userId = new Uint8Array(8);
+                crypto.getRandomValues(userId);
+
+                var createOptions = {
+                    publicKey: {
+                        challenge: challenge,
+                        rp: {
+                            id: rpId,
+                            name: 'PRF Plugin POC'
+                        },
+                        user: {
+                            id: userId,
+                            name: 'prf-poc-user',
+                            displayName: 'PRF POC User'
+                        },
+                        pubKeyCredParams: [
+                            { type: 'public-key', alg: -7 },   // ES256
+                            { type: 'public-key', alg: -257 }  // RS256
+                        ],
+                        authenticatorSelection: {
+                            residentKey: 'preferred',
+                            userVerification: 'preferred'
+                        },
+                        timeout: 120000,
+                        // Signal PRF intent during registration.
+                        // The empty prf object tells the authenticator we want PRF capability.
+                        // The response's getClientExtensionResults().prf.enabled indicates support.
+                        extensions: {
+                            prf: {}
+                        }
+                    }
+                };
+
+                log('Calling navigator.credentials.create()');
+                var credential = await navigator.credentials.create(createOptions);
+
+                log('Credential created, ID: ' + base64UrlEncode(credential.rawId));
+
+                // Check PRF extension result
+                var extResults = credential.getClientExtensionResults();
+                log('Extension results: ' + JSON.stringify(extResults));
+
+                var prfEnabled = !!(extResults && extResults.prf && extResults.prf.enabled);
+                log('PRF enabled: ' + prfEnabled);
+
+                var credentialId = base64UrlEncode(credential.rawId);
+
+                setStatus('success', 'Passkey registered!');
+
+                redirectResult(returnScheme, {
+                    status: 'success',
+                    prfEnabled: prfEnabled.toString(),
+                    credentialId: credentialId
+                });
+
+            } catch (err) {
+                log('Registration error: ' + err.name + ': ' + err.message);
+                setStatus('error', 'Registration failed: ' + err.message);
+
+                var errorCode = 'REGISTRATION_FAILED';
+                if (err.name === 'NotAllowedError') {
+                    errorCode = 'CANCELLED';
+                } else if (err.name === 'SecurityError') {
+                    errorCode = 'SECURITY_ERROR';
+                } else if (err.name === 'InvalidStateError') {
+                    errorCode = 'CREDENTIAL_EXISTS';
+                }
+
+                redirectError(returnScheme, errorCode, err.message, err.name);
+            }
+        }
+
+        // ===============================
+        // AUTHENTICATION FLOW (PRF)
+        // ===============================
+
+        if (action === 'authenticate') {
+            setStatus('working', 'Authenticating with PRF...');
+            log('Starting authentication ceremony with PRF');
+
+            var salt = base64UrlDecode(saltB64);
+            log('Salt length: ' + new Uint8Array(salt).length + ' bytes');
+
+            try {
+                // No allowCredentials — use discoverable credentials (resident keys).
+                // The browser/OS will present all available passkeys for this rpId.
+                var getOptions = {
+                    publicKey: {
+                        challenge: challenge,
+                        rpId: rpId,
+                        userVerification: 'preferred',
+                        timeout: 120000,
+                        extensions: {
+                            prf: {
+                                eval: {
+                                    first: new Uint8Array(salt)
+                                }
+                            }
+                        }
+                    }
+                };
+
+                log('Calling navigator.credentials.get()');
+                var assertion = await navigator.credentials.get(getOptions);
+
+                log('Assertion received, credential ID: ' +
+                    base64UrlEncode(assertion.rawId));
+
+                // Extract PRF result
+                var extResults = assertion.getClientExtensionResults();
+                log('Extension results: ' + JSON.stringify(extResults));
+
+                var prfResults = extResults && extResults.prf && extResults.prf.results;
+                var prfFirst = prfResults && prfResults.first;
+
+                if (!prfFirst) {
+                    // PRF extension was requested but not evaluated
+                    log('ERROR: No PRF result in extension output');
+
+                    if (extResults && extResults.prf !== undefined &&
+                        (!extResults.prf.results)) {
+                        redirectError(returnScheme, 'PRF_NOT_SUPPORTED',
+                            'Authenticator does not support PRF extension. ' +
+                            'Ensure you are using a compatible browser ' +
+                            '(Chrome 130+) and passkey provider.');
+                    } else {
+                        redirectError(returnScheme, 'PRF_NO_OUTPUT',
+                            'PRF extension returned no output. The ' +
+                            'authenticator may not support PRF.');
+                    }
+                    return;
+                }
+
+                var prfOutput = base64UrlEncode(prfFirst);
+                log('PRF output: ' + prfOutput);
+                log('PRF output length: ' + new Uint8Array(prfFirst).length + ' bytes');
+
+                var credentialId = base64UrlEncode(assertion.rawId);
+
+                setStatus('success', 'PRF derived!');
+
+                redirectResult(returnScheme, {
+                    status: 'success',
+                    prf: prfOutput,
+                    credentialId: credentialId
+                });
+
+            } catch (err) {
+                log('Authentication error: ' + err.name + ': ' + err.message);
+                setStatus('error', 'Authentication failed: ' + err.message);
+
+                var errorCode = 'AUTHENTICATION_FAILED';
+                if (err.name === 'NotAllowedError') {
+                    errorCode = 'CANCELLED';
+                } else if (err.name === 'SecurityError') {
+                    errorCode = 'SECURITY_ERROR';
+                }
+
+                redirectError(returnScheme, errorCode, err.message, err.name);
+            }
+        }
+    })();
+    </script>
+</body>
+</html>
