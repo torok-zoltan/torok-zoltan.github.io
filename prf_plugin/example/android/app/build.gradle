@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace "com.example.prf_plugin_example"
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.example.prf_plugin_example"
-        minSdk 23
-        targetSdk 34
+        minSdkVersion 34
+        targetSdk 36
         versionCode 1
         versionName "1.0"
     }

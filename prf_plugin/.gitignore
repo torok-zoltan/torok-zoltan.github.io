@@ -1,0 +1,87 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+certs/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/build
+
+.env
+
+.vscode/settings.json
+
+/lib/localization/generated/*
+windows/flutter/generated_plugins.cmake
+windows/flutter/generated_plugin_registrant.h
+windows/flutter/generated_plugin_registrant.cc
+macos/Flutter/GeneratedPluginRegistrant.swift
+linux/flutter/generated_plugins.cmake
+linux/flutter/generated_plugin_registrant.h
+linux/flutter/generated_plugin_registrant.cc
+lib/localization/generated/app_localizations_es.dart
+lib/localization/generated/app_localizations_en.dart
+lib/localization/generated/app_localizations.dart
+lib/data/models/dto/update_archive_request_dto.g.dart
+builds/*
+
+.fvm/
+**/*.g.dart
+**/*.freezed.dart
+**/*.gr.dart
+**/*.mocks.dart
+**/*.gen.dart
+**/*.mapper.dart
+**/*.config.dart
+
+lib/gen/
+lib/localization/generated/
+lib/l10n/*.dart
+lib/localization/untranslated.txt
+
+# Whitelabel
+assets/flavors/whitelabel
+ios/config/whitelabel
+/.claude
+/android/app/.cxx
+/android/app/build

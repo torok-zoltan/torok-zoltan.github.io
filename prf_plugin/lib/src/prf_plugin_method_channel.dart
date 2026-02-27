@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
@@ -90,7 +89,14 @@ class MethodChannelPrfPlugin extends PrfPluginPlatform {
     final status = params['status'] as String?;
 
     if (status == 'success') {
-      final prfOutputB64 = params['prf'] as String;
+      final prfOutputB64 = params['prf'] as String?;
+      if (prfOutputB64 == null || prfOutputB64.isEmpty) {
+        throw PrfError(
+          code: 'PRF_NO_OUTPUT',
+          message: 'Callback reported success but PRF output was empty. '
+              'The authenticator may not support the PRF extension.',
+        );
+      }
       final prfOutput = base64Url.decode(_padBase64(prfOutputB64));
       final credentialId = params['credentialId'] as String?;
       return PrfResult(

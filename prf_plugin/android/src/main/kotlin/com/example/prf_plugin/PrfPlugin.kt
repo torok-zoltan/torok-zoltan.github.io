@@ -3,6 +3,7 @@ package com.example.prf_plugin
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -33,8 +34,13 @@ import io.flutter.plugin.common.PluginRegistry
 class PrfPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                    PluginRegistry.NewIntentListener {
 
+    companion object {
+        private const val TAG = "PrfPlugin"
+    }
+
     private lateinit var channel: MethodChannel
     private var activity: Activity? = null
+    private var activityBinding: ActivityPluginBinding? = null
     private var pendingResult: Result? = null
 
     // --- FlutterPlugin ---
@@ -98,7 +104,20 @@ class PrfPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             return
         }
 
+        // If there's already a pending operation, fail fast rather than
+        // silently overwriting the old result (which would hang forever).
+        if (pendingResult != null) {
+            Log.w(TAG, "Previous pending result exists, cancelling it")
+            pendingResult?.error(
+                "CANCELLED",
+                "Operation cancelled by a new request",
+                null
+            )
+            pendingResult = null
+        }
+
         pendingResult = result
+        Log.d(TAG, "Launching Custom Tab: $url")
 
         val customTabsIntent = CustomTabsIntent.Builder()
             .setShowTitle(true)
@@ -110,32 +129,59 @@ class PrfPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     // --- ActivityAware ---
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        Log.d(TAG, "onAttachedToActivity")
         activity = binding.activity
+        activityBinding = binding
         binding.addOnNewIntentListener(this)
+
+        // If the activity was killed and recreated by the system while the
+        // Custom Tab was open, the callback intent ends up as the activity's
+        // launch intent rather than being delivered via onNewIntent.
+        handleCallbackIntent(binding.activity.intent)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        Log.d(TAG, "onDetachedFromActivityForConfigChanges")
+        activityBinding?.removeOnNewIntentListener(this)
+        activityBinding = null
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(
         binding: ActivityPluginBinding
     ) {
+        Log.d(TAG, "onReattachedToActivityForConfigChanges")
         activity = binding.activity
+        activityBinding = binding
         binding.addOnNewIntentListener(this)
     }
 
     override fun onDetachedFromActivity() {
+        Log.d(TAG, "onDetachedFromActivity")
+        activityBinding?.removeOnNewIntentListener(this)
+        activityBinding = null
         activity = null
     }
 
     // --- NewIntentListener ---
 
     override fun onNewIntent(intent: Intent): Boolean {
-        val data = intent.data ?: return false
+        Log.d(TAG, "onNewIntent: ${intent.data}")
+        return handleCallbackIntent(intent)
+    }
+
+    /**
+     * Parse a prfpoc:// callback intent and resolve the pending result.
+     *
+     * Returns true if the intent was consumed, false otherwise.
+     */
+    private fun handleCallbackIntent(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
 
         // Only handle our callback scheme
         if (data.scheme != "prfpoc") return false
+
+        Log.d(TAG, "Handling callback: $data")
 
         val params = mutableMapOf<String, String>()
         data.queryParameterNames.forEach { name ->
@@ -144,8 +190,18 @@ class PrfPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
             }
         }
 
-        pendingResult?.success(params)
-        pendingResult = null
+        Log.d(TAG, "Callback params: $params")
+
+        if (pendingResult != null) {
+            pendingResult?.success(params)
+            pendingResult = null
+        } else {
+            Log.w(TAG, "Callback received but no pending result. " +
+                    "Activity may have been recreated.")
+        }
+
+        // Clear the intent data so we don't re-process it on config changes.
+        intent?.data = null
         return true
     }
 }

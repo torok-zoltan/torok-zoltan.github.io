@@ -123,11 +123,12 @@ class _PrfHomePageState extends State<PrfHomePage> {
         title: const Text('WebAuthn PRF POC'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             // Platform support banner
             if (_prfSupported != null)
               Card(
@@ -311,7 +312,11 @@ class _PrfHomePageState extends State<PrfHomePage> {
                 ),
               ),
             ],
-          ],
+
+            // Extra bottom spacing for devices with gesture bars
+            const SizedBox(height: 32),
+            ],
+          ),
         ),
       ),
     );

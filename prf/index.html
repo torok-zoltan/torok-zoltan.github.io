@@ -30,6 +30,20 @@
             overflow-y: auto;
         }
         h1 { font-size: 18px; }
+        #returnLink {
+            display: none;
+            margin-top: 16px;
+            padding: 12px 24px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            text-decoration: none;
+            text-align: center;
+            cursor: pointer;
+        }
+        #returnLink:hover { background: #2980b9; }
     </style>
 </head>
 <body>
@@ -37,6 +51,7 @@
     <div id="statusBox" class="status working">
         <div id="statusText">Initializing...</div>
     </div>
+    <a id="returnLink" href="#">Return to App</a>
     <details>
         <summary>Debug Log</summary>
         <pre id="log"></pre>
@@ -47,6 +62,7 @@
         var logEl = document.getElementById('log');
         var statusBox = document.getElementById('statusBox');
         var statusText = document.getElementById('statusText');
+        var returnLink = document.getElementById('returnLink');
 
         function log(msg) {
             var ts = new Date().toISOString().substring(11, 23);
@@ -59,12 +75,30 @@
             statusText.textContent = msg;
         }
 
+        /**
+         * Redirect back to the app via custom URL scheme.
+         *
+         * Uses multiple redirect strategies for maximum compatibility
+         * across Chrome Custom Tabs and ASWebAuthenticationSession:
+         * 1. window.location.href (works on most browsers)
+         * 2. Fallback: show a manual "Return to App" link after 2s
+         */
         function redirectResult(returnScheme, params) {
             var query = Object.keys(params).map(function(k) {
                 return k + '=' + encodeURIComponent(params[k]);
             }).join('&');
             var url = returnScheme + '://callback?' + query;
             log('Redirecting to: ' + url);
+
+            // Show a manual return link as fallback (visible after 2s if
+            // auto-redirect didn't close the browser).
+            returnLink.href = url;
+            setTimeout(function() {
+                returnLink.style.display = 'block';
+                log('Auto-redirect may not have worked. Tap "Return to App".');
+            }, 2000);
+
+            // Primary redirect
             window.location.href = url;
         }
 
@@ -220,7 +254,7 @@
 
                 var credentialId = base64UrlEncode(credential.rawId);
 
-                setStatus('success', 'Passkey registered!');
+                setStatus('success', 'Passkey registered! Returning to app...');
 
                 redirectResult(returnScheme, {
                     status: 'success',
@@ -312,7 +346,7 @@
 
                 var credentialId = base64UrlEncode(assertion.rawId);
 
-                setStatus('success', 'PRF derived!');
+                setStatus('success', 'PRF derived! Returning to app...');
 
                 redirectResult(returnScheme, {
                     status: 'success',
