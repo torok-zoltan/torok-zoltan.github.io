@@ -145,6 +145,7 @@
         var challengeB64 = urlParams.get('challenge');
         var returnScheme = urlParams.get('returnScheme');
         var saltB64 = urlParams.get('salt');
+        var userName = urlParams.get('userName');
 
         log('Params: action=' + action + ' rpId=' + rpId +
             ' returnScheme=' + returnScheme);
@@ -219,8 +220,8 @@
                         },
                         user: {
                             id: userId,
-                            name: 'prf-poc-user',
-                            displayName: 'PRF POC User'
+                            name: userName || 'prf-poc-user',
+                            displayName: userName || 'PRF POC User'
                         },
                         pubKeyCredParams: [
                             { type: 'public-key', alg: -7 },   // ES256
