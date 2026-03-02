@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.assetpass.enterprise.dev",
+      "sha256_cert_fingerprints": [
+        "ED:E8:F7:F1:0D:3F:AE:54:91:15:69:FA:AC:E6:7A:02:FE:52:A9:8F:15:5A:57:32:1A:7A:95:74:93:7F:B0:33"
+      ]
+    }
+  }
+]
